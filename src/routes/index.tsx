@@ -6,6 +6,10 @@ import dishRiz from "@/assets/dish-riz.jpg";
 import chefNorbertNew from "@/assets/chef-norbert-new.png";
 import { useCart, formatFCFA } from "@/hooks/use-cart";
 import { CONTACT } from "@/lib/menu-data";
+import {
+  ShoppingCart, Banknote, Smartphone, CreditCard, Truck,
+  Phone, Clock, MapPin, ChevronRight,
+} from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -65,12 +69,13 @@ function Index() {
           </div>
           <Link
             to="/menu"
-            className="relative flex items-center rounded-full bg-sienne-dark p-2 text-white"
+            className="relative flex items-center gap-2 rounded-full bg-sienne-dark px-4 py-2.5 text-white"
           >
+            <ShoppingCart size={15} />
             <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-sienne-light text-[10px] font-bold text-sienne-dark">
               {cart.count}
             </span>
-            <span className="px-2 text-xs font-bold">PANIER</span>
+            <span className="text-xs font-bold">PANIER</span>
           </Link>
         </div>
       </nav>
@@ -101,9 +106,9 @@ function Index() {
             </p>
             <Link
               to="/menu"
-              className="block w-full rounded-lg bg-sienne-dark py-4 text-center font-bold uppercase tracking-widest text-sienne-cream transition-all hover:bg-sienne-mid"
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-sienne-dark py-4 text-center font-bold uppercase tracking-widest text-sienne-cream transition-all hover:bg-sienne-mid"
             >
-              Commander en ligne
+              Commander en ligne <ChevronRight size={16} />
             </Link>
             {cart.count > 0 && (
               <p className="mt-3 text-center text-xs font-semibold text-sienne-mid">
@@ -206,47 +211,41 @@ function Index() {
               <p className="mb-4 text-sm italic">{CONTACT.address}</p>
               <div className="flex flex-wrap gap-8">
                 <div>
-                  <p className="text-[10px] font-bold uppercase text-sienne-mid">
-                    Ouvert
+                  <p className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase text-sienne-mid">
+                    <Clock size={11} /> Ouvert
                   </p>
                   <p className="text-sm font-semibold">{CONTACT.hours}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] font-bold uppercase text-sienne-mid">
-                    Contact
+                  <p className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase text-sienne-mid">
+                    <Phone size={11} /> Contact
                   </p>
                   <div className="flex items-center gap-2">
                     <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">T-Money</span>
-                    <a
-                      href={`tel:+228${CONTACT.tmoneyNumber}`}
-                      className="block text-sm font-semibold hover:text-sienne-light"
-                    >
+                    <a href={`tel:+228${CONTACT.tmoneyNumber}`} className="text-sm font-semibold hover:text-sienne-light">
                       +228 {CONTACT.tmoneyNumber.replace(/(\d{2})(\d{2})(\d{2})(\d{2})/, "$1 $2 $3 $4")}
                     </a>
                   </div>
                   <div className="mt-1 flex items-center gap-2">
                     <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-700">Flooz</span>
-                    <a
-                      href={`tel:+228${CONTACT.floozNumber}`}
-                      className="block text-sm font-semibold hover:text-sienne-light"
-                    >
+                    <a href={`tel:+228${CONTACT.floozNumber}`} className="text-sm font-semibold hover:text-sienne-light">
                       +228 {CONTACT.floozNumber.replace(/(\d{2})(\d{2})(\d{2})(\d{2})/, "$1 $2 $3 $4")}
                     </a>
                   </div>
                 </div>
               </div>
               <div className="mt-6 flex flex-wrap gap-3">
-                <span className="rounded-full bg-white/60 px-3 py-1 text-[10px] font-bold uppercase tracking-widest">
-                  💵 Espèces
+                <span className="flex items-center gap-1.5 rounded-full bg-white/60 px-3 py-1 text-[10px] font-bold uppercase tracking-widest">
+                  <Banknote size={11} /> Espèces
                 </span>
-                <span className="rounded-full bg-white/60 px-3 py-1 text-[10px] font-bold uppercase tracking-widest">
-                  📲 T-Money · {CONTACT.tmoneyNumber}
+                <span className="flex items-center gap-1.5 rounded-full bg-white/60 px-3 py-1 text-[10px] font-bold uppercase tracking-widest">
+                  <Smartphone size={11} /> T-Money · {CONTACT.tmoneyNumber}
                 </span>
-                <span className="rounded-full bg-white/60 px-3 py-1 text-[10px] font-bold uppercase tracking-widest">
-                  📲 Flooz · {CONTACT.floozNumber}
+                <span className="flex items-center gap-1.5 rounded-full bg-white/60 px-3 py-1 text-[10px] font-bold uppercase tracking-widest">
+                  <CreditCard size={11} /> Flooz · {CONTACT.floozNumber}
                 </span>
-                <span className="rounded-full bg-white/60 px-3 py-1 text-[10px] font-bold uppercase tracking-widest">
-                  🛵 Livraison
+                <span className="flex items-center gap-1.5 rounded-full bg-white/60 px-3 py-1 text-[10px] font-bold uppercase tracking-widest">
+                  <Truck size={11} /> Livraison
                 </span>
               </div>
             </div>
@@ -284,8 +283,8 @@ function Index() {
             className="w-full"
           />
         </div>
-        <p className="mt-3 text-center text-xs text-sienne-dark/50">
-          📍 Klikamé, près de la station T Oil — Lomé, Togo
+        <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-sienne-dark/50">
+          <MapPin size={12} /> Klikamé, près de la station T Oil — Lomé, Togo
         </p>
       </section>
 
@@ -300,21 +299,15 @@ function Index() {
               href={`https://wa.me/${CONTACT.whatsapp}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="transition-colors hover:text-sienne-light"
+              className="flex items-center gap-1.5 transition-colors hover:text-sienne-light"
             >
-              WhatsApp
+              <Phone size={13} /> WhatsApp
             </a>
-            <a
-              href={`tel:+228${CONTACT.tmoneyNumber}`}
-              className="transition-colors hover:text-sienne-light"
-            >
-              T-Money · {CONTACT.tmoneyNumber}
+            <a href={`tel:+228${CONTACT.tmoneyNumber}`} className="flex items-center gap-1.5 transition-colors hover:text-sienne-light">
+              <Smartphone size={13} /> T-Money · {CONTACT.tmoneyNumber}
             </a>
-            <a
-              href={`tel:+228${CONTACT.floozNumber}`}
-              className="transition-colors hover:text-sienne-light"
-            >
-              Flooz · {CONTACT.floozNumber}
+            <a href={`tel:+228${CONTACT.floozNumber}`} className="flex items-center gap-1.5 transition-colors hover:text-sienne-light">
+              <CreditCard size={13} /> Flooz · {CONTACT.floozNumber}
             </a>
           </div>
         </div>

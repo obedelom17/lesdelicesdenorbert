@@ -1,5 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState, useCallback } from "react";
+import {
+  ShoppingCart, X, Coffee, Fish, Utensils, GlassWater,
+  UtensilsCrossed, Truck, ShoppingBag, Banknote, Smartphone,
+  Send, CheckCircle, AlertCircle, Loader2, Navigation,
+  MapPin, MessageSquare, User, Phone, CreditCard, ChefHat,
+  Wheat, Minus, Plus, ArrowLeft,
+} from "lucide-react";
 import { menu, CONTACT } from "@/lib/menu-data";
 import { useCart, formatFCFA } from "@/hooks/use-cart";
 
@@ -27,32 +34,67 @@ type Mode = "sur-place" | "livraison" | "emporter";
 type Payment = "especes" | "t-money" | "flooz";
 type PayStep = "idle" | "loading" | "success" | "error";
 
-// PayGateGlobal API integration
-async function initiatePayGatePayment(params: {
+// Map category id → Lucide icon
+const CAT_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
+  "petit-dejeuner": Coffee,
+  "spaghetti": UtensilsCrossed,
+  "attieke": Fish,
+  "couscous": ChefHat,
+  "riz-cantonne": Wheat,
+  "boissons": GlassWater,
+};
+
+// FedaPay API integration
+const FEDAPAY_BASE = "https://api.fedapay.com/v1";
+
+async function initiateFedaPayPayment(params: {
   phone: string;
   amount: number;
   network: "flooz" | "tmoney";
+  customerName: string;
   description: string;
-  merchantToken: string;
+  apiKey: string;
 }): Promise<{ success: boolean; transactionId?: string; message?: string }> {
   try {
-    const res = await fetch("https://api.paygateglobal.com/v1/payment", {
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${params.apiKey}`,
+    };
+
+    const txRes = await fetch(`${FEDAPAY_BASE}/transactions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
-        auth_token: params.merchantToken,
-        identifier: `LDN-${Date.now()}`,
-        phone: params.phone,
-        amount: params.amount,
-        network: params.network,
         description: params.description,
+        amount: params.amount,
+        currency: { iso: "XOF" },
+        customer: {
+          firstname: params.customerName.split(" ")[0] || params.customerName,
+          lastname: params.customerName.split(" ").slice(1).join(" ") || "-",
+          phone_number: { number: params.phone, country: "TG" },
+        },
       }),
     });
-    const data = await res.json();
-    if (data.status === 0) {
-      return { success: true, transactionId: data.transaction_id };
+    const txData = await txRes.json();
+    const txId: number = txData?.v1?.transaction?.id;
+    if (!txId) {
+      return { success: false, message: txData?.message || "Création transaction échouée." };
     }
-    return { success: false, message: data.message || "Paiement échoué" };
+
+    const payRes = await fetch(`${FEDAPAY_BASE}/transactions/${txId}/pay`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        currency: { iso: "XOF" },
+        mode: params.network,
+        mobile_money: { number: params.phone },
+      }),
+    });
+    const payData = await payRes.json();
+    if (payData?.v1?.transaction?.status === "pending" || payRes.ok) {
+      return { success: true, transactionId: String(txId) };
+    }
+    return { success: false, message: payData?.message || "Paiement échoué." };
   } catch {
     return { success: false, message: "Erreur réseau. Vérifiez votre connexion." };
   }
@@ -70,18 +112,15 @@ function MenuPage() {
   const [note, setNote] = useState("");
   const [activeCat, setActiveCat] = useState(menu[0].id);
 
-  // GPS state
   const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
   const [gpsError, setGpsError] = useState("");
 
-  // PayGateGlobal state
   const [payStep, setPayStep] = useState<PayStep>("idle");
   const [payError, setPayError] = useState("");
   const [transactionId, setTransactionId] = useState("");
 
-  // Merchant token (à configurer par le client)
-  const MERCHANT_TOKEN = import.meta.env.VITE_PAYGATE_TOKEN ?? "";
+  const FEDAPAY_API_KEY = import.meta.env.VITE_FEDAPAY_KEY ?? "";
 
   const captureGps = useCallback(() => {
     if (!navigator.geolocation) {
@@ -118,34 +157,23 @@ function MenuPage() {
     const lines: string[] = [];
     lines.push("*Nouvelle commande — Les Délices de Norbert*");
     lines.push("");
-    lines.push(`👤 ${name}`);
-    lines.push(`📞 ${phone}`);
-    lines.push(
-      `🛍️ Mode : ${mode === "sur-place" ? "Sur place" : mode === "livraison" ? "Livraison" : "À emporter"}`,
-    );
+    lines.push(`Nom : ${name}`);
+    lines.push(`Tel : ${phone}`);
+    lines.push(`Mode : ${mode === "sur-place" ? "Sur place" : mode === "livraison" ? "Livraison" : "À emporter"}`);
     if (mode === "livraison") {
-      lines.push(`📍 Adresse : ${address}`);
-      if (mapsLink) {
-        lines.push(`🗺️ Position GPS : ${mapsLink}`);
-      }
+      lines.push(`Adresse : ${address}`);
+      if (mapsLink) lines.push(`Position GPS : ${mapsLink}`);
     }
-    lines.push(
-      `💳 Paiement : ${payment === "especes" ? "Espèces" : payment === "t-money" ? "T-Money ("+CONTACT.tmoneyNumber+")" : "Flooz ("+CONTACT.floozNumber+")"}`,
-    );
-    if (transactionId) {
-      lines.push(`✅ Transaction : ${transactionId}`);
-    }
+    lines.push(`Paiement : ${payment === "especes" ? "Espèces" : payment === "t-money" ? `T-Money (${CONTACT.tmoneyNumber})` : `Flooz (${CONTACT.floozNumber})`}`);
+    if (transactionId) lines.push(`Transaction FedaPay : ${transactionId}`);
     lines.push("");
     lines.push("*Articles :*");
     cart.items.forEach((i) => {
-      lines.push(`• ${i.qty} × ${i.name} — ${formatFCFA(i.qty * i.price)}`);
+      lines.push(`- ${i.qty} x ${i.name} : ${formatFCFA(i.qty * i.price)}`);
     });
     lines.push("");
     lines.push(`*Total : ${formatFCFA(cart.total)}*`);
-    if (note.trim()) {
-      lines.push("");
-      lines.push(`📝 Note : ${note}`);
-    }
+    if (note.trim()) lines.push(`\nNote : ${note}`);
     return `https://wa.me/${CONTACT.whatsapp}?text=${encodeURIComponent(lines.join("\n"))}`;
   }, [cart.items, cart.total, name, phone, mode, address, payment, note, mapsLink, transactionId]);
 
@@ -159,15 +187,15 @@ function MenuPage() {
     setPayError("");
 
     const network = payment === "flooz" ? "flooz" : "tmoney";
-    const merchantPhone = payment === "flooz" ? CONTACT.floozNumber : CONTACT.tmoneyNumber;
-    
-    // Use the customer's phone for payment
-    const result = await initiatePayGatePayment({
-      phone: phone.replace(/\s/g, "").replace("+228", "").replace("00228", ""),
+    const cleanPhone = phone.replace(/\s/g, "").replace("+228", "").replace("00228", "");
+
+    const result = await initiateFedaPayPayment({
+      phone: cleanPhone,
       amount: cart.total,
       network,
+      customerName: name,
       description: `Commande Les Délices de Norbert — ${name}`,
-      merchantToken: MERCHANT_TOKEN,
+      apiKey: FEDAPAY_API_KEY,
     });
 
     if (result.success) {
@@ -177,7 +205,7 @@ function MenuPage() {
       setPayError(result.message ?? "Paiement échoué.");
       setPayStep("error");
     }
-  }, [canSubmit, phone, payment, cart.total, name, MERCHANT_TOKEN]);
+  }, [canSubmit, phone, payment, cart.total, name, FEDAPAY_API_KEY]);
 
   const resetPay = () => {
     setPayStep("idle");
@@ -208,12 +236,13 @@ function MenuPage() {
             <button
               type="button"
               onClick={() => setOpen(true)}
-              className="relative flex items-center rounded-full bg-sienne-dark p-2 text-white"
+              className="relative flex items-center gap-2 rounded-full bg-sienne-dark px-4 py-2.5 text-white"
             >
+              <ShoppingCart size={15} />
               <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-sienne-light text-[10px] font-bold text-sienne-dark">
                 {cart.count}
               </span>
-              <span className="px-2 text-xs font-bold">PANIER · {formatFCFA(cart.total)}</span>
+              <span className="text-xs font-bold">{formatFCFA(cart.total)}</span>
             </button>
           </div>
         </div>
@@ -223,63 +252,71 @@ function MenuPage() {
       <div className="sticky top-[73px] z-30 border-b border-sienne-dark/10 bg-bg-soft/90 backdrop-blur">
         <div className="mx-auto max-w-7xl px-6">
           <div className="flex gap-1 overflow-x-auto py-3 scrollbar-hide">
-            {menu.map((cat) => (
-              <a
-                key={cat.id}
-                href={`#${cat.id}`}
-                onClick={() => setActiveCat(cat.id)}
-                className={`flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-xs font-bold uppercase tracking-widest transition-all ${
-                  activeCat === cat.id
-                    ? "bg-sienne-dark text-sienne-cream"
-                    : "bg-sienne-cream/40 hover:bg-sienne-cream"
-                }`}
-              >
-                {cat.emoji} {cat.title}
-              </a>
-            ))}
+            {menu.map((cat) => {
+              const Icon = CAT_ICONS[cat.id] ?? Utensils;
+              return (
+                <a
+                  key={cat.id}
+                  href={`#${cat.id}`}
+                  onClick={() => setActiveCat(cat.id)}
+                  className={`flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-xs font-bold uppercase tracking-widest transition-all ${
+                    activeCat === cat.id
+                      ? "bg-sienne-dark text-sienne-cream"
+                      : "bg-sienne-cream/40 hover:bg-sienne-cream"
+                  }`}
+                >
+                  <Icon size={13} />
+                  {cat.title}
+                </a>
+              );
+            })}
           </div>
         </div>
       </div>
 
       {/* Menu items */}
       <main className="mx-auto max-w-7xl px-6 py-10">
-        {menu.map((cat) => (
-          <section key={cat.id} id={cat.id} className="mb-14 scroll-mt-32">
-            <h2 className="mb-6 font-lora text-3xl">
-              {cat.emoji} {cat.title}
-            </h2>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {cat.items.map((item) => (
-                <article
-                  key={item.id}
-                  className="flex flex-col justify-between gap-3 rounded-2xl border border-sienne-dark/10 bg-white p-5"
-                >
-                  <div>
-                    <div className="mb-1 flex items-start justify-between gap-2">
-                      <h3 className="font-lora text-lg leading-tight">{item.emoji} {item.name}</h3>
-                    </div>
-                    <p className="mb-2 text-sm leading-relaxed text-sienne-dark/60">
-                      {item.description}
-                    </p>
-                    <p className="text-sm font-bold text-sienne-light">
-                      {item.priceLabel ?? formatFCFA(item.price)}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => cart.add({ id: item.id, name: item.name, price: item.price })}
-                    className="w-full rounded-xl border border-sienne-dark/15 py-2.5 text-xs font-bold uppercase tracking-widest transition-all hover:border-sienne-dark hover:bg-sienne-dark hover:text-sienne-cream"
+        {menu.map((cat) => {
+          const Icon = CAT_ICONS[cat.id] ?? Utensils;
+          return (
+            <section key={cat.id} id={cat.id} className="mb-14 scroll-mt-32">
+              <h2 className="mb-6 flex items-center gap-3 font-lora text-3xl">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sienne-dark text-sienne-cream">
+                  <Icon size={18} />
+                </span>
+                {cat.title}
+              </h2>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {cat.items.map((item) => (
+                  <article
+                    key={item.id}
+                    className="flex flex-col justify-between gap-3 rounded-2xl border border-sienne-dark/10 bg-white p-5"
                   >
-                    + Ajouter
-                  </button>
-                </article>
-              ))}
-            </div>
-          </section>
-        ))}
+                    <div>
+                      <h3 className="mb-1 font-lora text-lg leading-tight">{item.name}</h3>
+                      <p className="mb-2 text-sm leading-relaxed text-sienne-dark/60">
+                        {item.description}
+                      </p>
+                      <p className="text-sm font-bold text-sienne-light">
+                        {item.priceLabel ?? formatFCFA(item.price)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => cart.add({ id: item.id, name: item.name, price: item.price })}
+                      className="w-full rounded-xl border border-sienne-dark/15 py-2.5 text-xs font-bold uppercase tracking-widest transition-all hover:border-sienne-dark hover:bg-sienne-dark hover:text-sienne-cream"
+                    >
+                      Ajouter
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </main>
 
-      {/* Sticky floating cart button (mobile) */}
+      {/* Sticky floating cart (mobile) */}
       {cart.count > 0 && !open && (
         <button
           type="button"
@@ -290,7 +327,7 @@ function MenuPage() {
             {cart.count}
           </span>
           <span className="text-sm font-bold uppercase tracking-widest">
-            Voir le panier • {formatFCFA(cart.total)}
+            Panier · {formatFCFA(cart.total)}
           </span>
         </button>
       )}
@@ -302,74 +339,56 @@ function MenuPage() {
             type="button"
             aria-label="Fermer"
             className="absolute inset-0 bg-sienne-dark/60 backdrop-blur-sm"
-            onClick={() => {
-              setOpen(false);
-              setCheckout(false);
-              resetPay();
-            }}
+            onClick={() => { setOpen(false); setCheckout(false); resetPay(); }}
           />
           <aside className="relative flex h-full w-full max-w-md flex-col overflow-hidden bg-bg-soft shadow-2xl">
             <header className="flex items-center justify-between border-b border-sienne-dark/10 px-6 py-5">
-              <h2 className="font-lora text-2xl">
-                🛒 {checkout ? "Finaliser" : "Ma commande"}
+              <h2 className="flex items-center gap-2 font-lora text-2xl">
+                <ShoppingCart size={20} />
+                {checkout ? "Finaliser la commande" : "Ma commande"}
               </h2>
               <button
                 type="button"
-                onClick={() => {
-                  setOpen(false);
-                  setCheckout(false);
-                  resetPay();
-                }}
-                className="text-2xl leading-none text-sienne-dark/60 hover:text-sienne-dark"
+                onClick={() => { setOpen(false); setCheckout(false); resetPay(); }}
                 aria-label="Fermer"
+                className="rounded-full p-1 text-sienne-dark/60 hover:bg-sienne-cream hover:text-sienne-dark"
               >
-                ×
+                <X size={20} />
               </button>
             </header>
 
             <div className="flex-1 overflow-y-auto px-6 py-6">
               {cart.items.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center text-center">
-                  <div className="mb-4 text-6xl">🛒</div>
+                  <ShoppingCart size={48} className="mb-4 text-sienne-dark/20" />
                   <p className="mb-2 font-lora text-xl">Panier vide</p>
-                  <p className="text-sm text-sienne-dark/60">
-                    Ajoutez des plats pour commander
-                  </p>
+                  <p className="text-sm text-sienne-dark/60">Ajoutez des plats pour commander</p>
                 </div>
               ) : !checkout ? (
                 <ul className="space-y-4">
                   {cart.items.map((i) => (
-                    <li
-                      key={i.id}
-                      className="flex items-start justify-between gap-3 border-b border-sienne-dark/5 pb-4"
-                    >
+                    <li key={i.id} className="flex items-start justify-between gap-3 border-b border-sienne-dark/5 pb-4">
                       <div className="min-w-0 flex-1">
-                        <p className="mb-1 font-lora text-base leading-tight">
-                          {i.name}
-                        </p>
-                        <p className="text-sm text-sienne-mid">
-                          {formatFCFA(i.price)} l'unité
-                        </p>
+                        <p className="mb-1 font-lora text-base leading-tight">{i.name}</p>
+                        <p className="text-sm text-sienne-mid">{formatFCFA(i.price)} l'unité</p>
                       </div>
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
                           onClick={() => cart.setQty(i.id, i.qty - 1)}
-                          className="grid h-8 w-8 place-items-center rounded-full border border-sienne-dark/20 text-sm font-bold hover:bg-sienne-cream/40"
+                          className="grid h-8 w-8 place-items-center rounded-full border border-sienne-dark/20 hover:bg-sienne-cream/40"
                           aria-label="Diminuer"
                         >
-                          −
+                          <Minus size={12} />
                         </button>
-                        <span className="w-6 text-center text-sm font-bold">
-                          {i.qty}
-                        </span>
+                        <span className="w-6 text-center text-sm font-bold">{i.qty}</span>
                         <button
                           type="button"
                           onClick={() => cart.setQty(i.id, i.qty + 1)}
-                          className="grid h-8 w-8 place-items-center rounded-full border border-sienne-dark/20 text-sm font-bold hover:bg-sienne-cream/40"
+                          className="grid h-8 w-8 place-items-center rounded-full border border-sienne-dark/20 hover:bg-sienne-cream/40"
                           aria-label="Augmenter"
                         >
-                          +
+                          <Plus size={12} />
                         </button>
                       </div>
                     </li>
@@ -377,31 +396,18 @@ function MenuPage() {
                 </ul>
               ) : (
                 <div className="space-y-5">
-                  <Field
-                    label="Nom complet *"
-                    value={name}
-                    onChange={setName}
-                    placeholder="Kokou Norbert"
-                  />
-                  <Field
-                    label="Téléphone *"
-                    value={phone}
-                    onChange={setPhone}
-                    placeholder="+228 90 00 00 00"
-                    type="tel"
-                  />
+                  <Field label="Nom complet" icon={<User size={14} />} value={name} onChange={setName} placeholder="Kokou Norbert" />
+                  <Field label="Téléphone" icon={<Phone size={14} />} value={phone} onChange={setPhone} placeholder="+228 90 00 00 00" type="tel" />
+
+                  {/* Mode */}
                   <div>
-                    <p className="mb-2 text-xs font-bold uppercase tracking-widest">
-                      Mode de commande
-                    </p>
+                    <p className="mb-2 text-xs font-bold uppercase tracking-widest">Mode de commande</p>
                     <div className="grid grid-cols-3 gap-2">
-                      {(
-                        [
-                          { v: "sur-place", label: "Sur place", emoji: "🍽" },
-                          { v: "livraison", label: "Livraison", emoji: "🛵" },
-                          { v: "emporter", label: "À emporter", emoji: "🥡" },
-                        ] as { v: Mode; label: string; emoji: string }[]
-                      ).map((o) => (
+                      {([
+                        { v: "sur-place", label: "Sur place", Icon: UtensilsCrossed },
+                        { v: "livraison", label: "Livraison", Icon: Truck },
+                        { v: "emporter", label: "À emporter", Icon: ShoppingBag },
+                      ] as { v: Mode; label: string; Icon: React.ComponentType<{ size?: number }> }[]).map((o) => (
                         <button
                           key={o.v}
                           type="button"
@@ -412,53 +418,50 @@ function MenuPage() {
                               : "border-sienne-dark/15 bg-white hover:border-sienne-light"
                           }`}
                         >
-                          <div className="mb-1 text-xl">{o.emoji}</div>
+                          <div className="mb-1 flex justify-center"><o.Icon size={18} /></div>
                           {o.label}
                         </button>
                       ))}
                     </div>
                   </div>
+
                   {mode === "livraison" && (
                     <div>
-                      <Field
-                        label="📍 Adresse de livraison"
-                        value={address}
-                        onChange={setAddress}
-                        placeholder="Quartier, repère…"
-                      />
-                      {/* GPS Button */}
+                      <Field label="Adresse de livraison" icon={<MapPin size={14} />} value={address} onChange={setAddress} placeholder="Quartier, repère…" />
                       <div className="mt-2">
                         <button
                           type="button"
                           onClick={captureGps}
                           disabled={gpsLoading}
-                          className="flex w-full items-center justify-center gap-2 rounded-xl border border-sienne-light/40 bg-sienne-light/10 py-2.5 text-xs font-bold uppercase tracking-widest text-sienne-dark transition-all hover:bg-sienne-light/20 disabled:opacity-60"
+                          className="flex w-full items-center justify-center gap-2 rounded-xl border border-sienne-dark/20 py-2.5 text-xs font-bold uppercase tracking-widest transition-all hover:border-sienne-dark disabled:opacity-60"
                         >
-                          {gpsLoading ? "📡 Localisation…" : gpsCoords ? "✅ Position capturée" : "📡 Partager ma position GPS"}
+                          {gpsLoading ? (
+                            <><Loader2 size={14} className="animate-spin" /> Localisation…</>
+                          ) : gpsCoords ? (
+                            <><CheckCircle size={14} className="text-green-600" /> Position capturée</>
+                          ) : (
+                            <><Navigation size={14} /> Partager ma position GPS</>
+                          )}
                         </button>
-                        {gpsError && (
-                          <p className="mt-1 text-[11px] text-red-500">{gpsError}</p>
-                        )}
+                        {gpsError && <p className="mt-1 text-[11px] text-red-500">{gpsError}</p>}
                         {gpsCoords && (
                           <p className="mt-1 text-[11px] text-green-700">
-                            Position : {gpsCoords.lat.toFixed(5)}, {gpsCoords.lng.toFixed(5)}
+                            {gpsCoords.lat.toFixed(5)}, {gpsCoords.lng.toFixed(5)}
                           </p>
                         )}
                       </div>
                     </div>
                   )}
+
+                  {/* Paiement */}
                   <div>
-                    <p className="mb-2 text-xs font-bold uppercase tracking-widest">
-                      Paiement
-                    </p>
+                    <p className="mb-2 text-xs font-bold uppercase tracking-widest">Paiement</p>
                     <div className="grid grid-cols-3 gap-2">
-                      {(
-                        [
-                          { v: "especes", label: "Espèces", emoji: "💵" },
-                          { v: "t-money", label: "T-Money", emoji: "📲" },
-                          { v: "flooz", label: "Flooz", emoji: "📲" },
-                        ] as { v: Payment; label: string; emoji: string }[]
-                      ).map((o) => (
+                      {([
+                        { v: "especes", label: "Espèces", Icon: Banknote },
+                        { v: "t-money", label: "T-Money", Icon: Smartphone },
+                        { v: "flooz", label: "Flooz", Icon: CreditCard },
+                      ] as { v: Payment; label: string; Icon: React.ComponentType<{ size?: number }> }[]).map((o) => (
                         <button
                           key={o.v}
                           type="button"
@@ -469,7 +472,7 @@ function MenuPage() {
                               : "border-sienne-dark/15 bg-white hover:border-sienne-light"
                           }`}
                         >
-                          <div className="mb-1 text-xl">{o.emoji}</div>
+                          <div className="mb-1 flex justify-center"><o.Icon size={18} /></div>
                           {o.label}
                         </button>
                       ))}
@@ -486,31 +489,35 @@ function MenuPage() {
                     )}
                   </div>
 
-                  {/* PayGateGlobal status */}
+                  {/* FedaPay status */}
                   {isOnlinePayment && payStep === "success" && (
-                    <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-center">
-                      <p className="text-sm font-bold text-green-700">✅ Paiement initié !</p>
-                      <p className="mt-1 text-xs text-green-600">
-                        Validez la demande sur votre téléphone. Transaction : {transactionId || "en attente"}
-                      </p>
+                    <div className="flex items-start gap-3 rounded-xl border border-green-200 bg-green-50 p-4">
+                      <CheckCircle size={18} className="mt-0.5 shrink-0 text-green-600" />
+                      <div>
+                        <p className="text-sm font-bold text-green-700">Paiement initié</p>
+                        <p className="text-xs text-green-600">
+                          Validez la demande sur votre téléphone.
+                          {transactionId && <> Réf : {transactionId}</>}
+                        </p>
+                      </div>
                     </div>
                   )}
                   {isOnlinePayment && payStep === "error" && (
-                    <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-                      <p className="text-sm font-bold text-red-700">⚠️ {payError}</p>
-                      <button
-                        type="button"
-                        onClick={resetPay}
-                        className="mt-2 text-xs font-bold text-red-600 underline"
-                      >
-                        Réessayer
-                      </button>
+                    <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4">
+                      <AlertCircle size={18} className="mt-0.5 shrink-0 text-red-600" />
+                      <div>
+                        <p className="text-sm font-bold text-red-700">{payError}</p>
+                        <button type="button" onClick={resetPay} className="mt-1 text-xs font-bold text-red-600 underline">
+                          Réessayer
+                        </button>
+                      </div>
                     </div>
                   )}
 
+                  {/* Note */}
                   <div>
-                    <label className="mb-2 block text-xs font-bold uppercase tracking-widest">
-                      💬 Note (optionnel)
+                    <label className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest">
+                      <MessageSquare size={13} /> Note (optionnel)
                     </label>
                     <textarea
                       value={note}
@@ -527,12 +534,8 @@ function MenuPage() {
             {cart.items.length > 0 && (
               <footer className="border-t border-sienne-dark/10 bg-white px-6 py-5">
                 <div className="mb-4 flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-widest text-sienne-mid">
-                    Total
-                  </span>
-                  <span className="font-lora text-2xl">
-                    {formatFCFA(cart.total)}
-                  </span>
+                  <span className="text-xs font-bold uppercase tracking-widest text-sienne-mid">Total</span>
+                  <span className="font-lora text-2xl">{formatFCFA(cart.total)}</span>
                 </div>
                 {!checkout ? (
                   <button
@@ -540,32 +543,31 @@ function MenuPage() {
                     onClick={() => setCheckout(true)}
                     className="w-full rounded-xl bg-sienne-dark py-4 text-sm font-bold uppercase tracking-widest text-sienne-cream transition-all hover:bg-sienne-mid"
                   >
-                    Passer commande →
+                    Passer commande
                   </button>
                 ) : (
                   <div className="space-y-2">
-                    {/* Online payment button for T-Money / Flooz */}
                     {isOnlinePayment && payStep === "idle" && (
                       <button
                         type="button"
                         disabled={!canSubmit}
                         onClick={handleOnlinePayment}
-                        className={`w-full rounded-xl py-4 text-sm font-bold uppercase tracking-widest transition-all ${
+                        className={`flex w-full items-center justify-center gap-2 rounded-xl py-4 text-sm font-bold uppercase tracking-widest transition-all ${
                           canSubmit
                             ? "bg-sienne-dark text-sienne-cream hover:bg-sienne-mid"
                             : "cursor-not-allowed bg-sienne-dark/20 text-sienne-dark/40"
                         }`}
                       >
-                        📲 Payer {payment === "flooz" ? "Flooz" : "T-Money"} — {formatFCFA(cart.total)}
+                        <CreditCard size={16} />
+                        Payer {payment === "flooz" ? "Flooz" : "T-Money"} · {formatFCFA(cart.total)}
                       </button>
                     )}
                     {isOnlinePayment && payStep === "loading" && (
-                      <div className="w-full rounded-xl bg-sienne-dark/20 py-4 text-center text-sm font-bold uppercase tracking-widest text-sienne-dark/50">
-                        ⏳ Traitement en cours…
+                      <div className="flex w-full items-center justify-center gap-2 rounded-xl bg-sienne-dark/10 py-4 text-sm font-bold text-sienne-dark/50">
+                        <Loader2 size={16} className="animate-spin" /> Traitement en cours…
                       </div>
                     )}
 
-                    {/* WhatsApp confirm (always shown, or after successful payment) */}
                     {(!isOnlinePayment || payStep === "success") && (
                       <a
                         href={canSubmit ? whatsappUrl : undefined}
@@ -573,32 +575,25 @@ function MenuPage() {
                         rel="noopener noreferrer"
                         aria-disabled={!canSubmit}
                         onClick={(e) => {
-                          if (!canSubmit) {
-                            e.preventDefault();
-                            return;
-                          }
-                          setTimeout(() => {
-                            cart.clear();
-                            setCheckout(false);
-                            setOpen(false);
-                            resetPay();
-                          }, 400);
+                          if (!canSubmit) { e.preventDefault(); return; }
+                          setTimeout(() => { cart.clear(); setCheckout(false); setOpen(false); resetPay(); }, 400);
                         }}
-                        className={`block w-full rounded-xl py-4 text-center text-sm font-bold uppercase tracking-widest transition-all ${
+                        className={`flex w-full items-center justify-center gap-2 rounded-xl py-4 text-center text-sm font-bold uppercase tracking-widest transition-all ${
                           canSubmit
                             ? "bg-sienne-light text-sienne-dark hover:bg-sienne-cream"
                             : "cursor-not-allowed bg-sienne-dark/20 text-sienne-dark/40"
                         }`}
                       >
-                        🚀 Confirmer via WhatsApp
+                        <Send size={15} /> Confirmer via WhatsApp
                       </a>
                     )}
+
                     <button
                       type="button"
                       onClick={() => { setCheckout(false); resetPay(); }}
-                      className="w-full text-xs font-semibold uppercase tracking-widest text-sienne-dark/50 hover:text-sienne-dark"
+                      className="flex w-full items-center justify-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-sienne-dark/50 hover:text-sienne-dark"
                     >
-                      ← Retour au panier
+                      <ArrowLeft size={13} /> Retour au panier
                     </button>
                   </div>
                 )}
@@ -615,17 +610,11 @@ function MenuPage() {
             © 2026 Les Délices de Norbert — {CONTACT.address}
           </p>
           <div className="flex flex-wrap justify-center gap-6 text-xs font-bold uppercase tracking-widest">
-            <a
-              href={`tel:+228${CONTACT.tmoneyNumber}`}
-              className="transition-colors hover:text-sienne-light"
-            >
-              T-Money · {CONTACT.tmoneyNumber}
+            <a href={`tel:+228${CONTACT.tmoneyNumber}`} className="flex items-center gap-1.5 transition-colors hover:text-sienne-light">
+              <Smartphone size={13} /> T-Money · {CONTACT.tmoneyNumber}
             </a>
-            <a
-              href={`tel:+228${CONTACT.floozNumber}`}
-              className="transition-colors hover:text-sienne-light"
-            >
-              Flooz · {CONTACT.floozNumber}
+            <a href={`tel:+228${CONTACT.floozNumber}`} className="flex items-center gap-1.5 transition-colors hover:text-sienne-light">
+              <CreditCard size={13} /> Flooz · {CONTACT.floozNumber}
             </a>
           </div>
         </div>
@@ -636,12 +625,14 @@ function MenuPage() {
 
 function Field({
   label,
+  icon,
   value,
   onChange,
   placeholder,
   type = "text",
 }: {
   label: string;
+  icon?: React.ReactNode;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
@@ -649,8 +640,8 @@ function Field({
 }) {
   return (
     <div>
-      <label className="mb-2 block text-xs font-bold uppercase tracking-widest">
-        {label}
+      <label className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest">
+        {icon} {label}
       </label>
       <input
         type={type}
