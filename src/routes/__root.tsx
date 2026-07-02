@@ -129,6 +129,8 @@ function RootShell({ children }: { children: ReactNode }) {
       <body>
         {children}
         <Scripts />
+        {/* KKiaPay widget CDN */}
+        <script src="https://cdn.kkiapay.me/k.js" async />
       </body>
     </html>
   );

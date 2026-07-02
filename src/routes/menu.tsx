@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useEffect } from "react";
 import {
   ShoppingCart, X, Coffee, Fish, Utensils, GlassWater,
   UtensilsCrossed, Truck, ShoppingBag, Banknote, Smartphone,
@@ -9,6 +9,21 @@ import {
 } from "lucide-react";
 import { menu, CONTACT } from "@/lib/menu-data";
 import { useCart, formatFCFA } from "@/hooks/use-cart";
+
+// Types pour les globals injectés par le CDN KKiaPay (cdn.kkiapay.me/k.js)
+declare global {
+  function openKkiapayWidget(opts: {
+    amount: number;
+    api_key: string;
+    sandbox?: boolean;
+    phone?: string;
+    name?: string;
+    theme?: string;
+  }): void;
+  function addSuccessListener(cb: (r: { transactionId: string }) => void): void;
+  function addFailedListener(cb: () => void): void;
+  function removeKkiapayListener(event: string, cb: unknown): void;
+}
 
 export const Route = createFileRoute("/menu")({
   head: () => ({
@@ -44,60 +59,35 @@ const CAT_ICONS: Record<string, React.ComponentType<{ size?: number; className?:
   "boissons": GlassWater,
 };
 
-// FedaPay API integration
-const FEDAPAY_BASE = "https://api.fedapay.com/v1";
+// KKiaPay — widget popup (Flooz + TMoney Togo)
+// Sandbox public key visible dans le dashboard KKiaPay → Developers → API Keys
+const KKIAPAY_PUBLIC_KEY = import.meta.env.VITE_KKIAPAY_KEY ?? "d411dbd075fa11f19a6a43f75609c6e3";
+const KKIAPAY_SANDBOX   = import.meta.env.VITE_KKIAPAY_SANDBOX !== "false"; // true par défaut
 
-async function initiateFedaPayPayment(params: {
-  phone: string;
-  amount: number;
-  network: "flooz" | "tmoney";
-  customerName: string;
-  description: string;
-  apiKey: string;
-}): Promise<{ success: boolean; transactionId?: string; message?: string }> {
-  try {
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${params.apiKey}`,
+function useKkiaPay(onSuccess: (txId: string) => void, onFailed: () => void) {
+  useEffect(() => {
+    const handleSuccess = (response: { transactionId: string }) => onSuccess(response.transactionId);
+    const handleFailed = () => onFailed();
+    addSuccessListener(handleSuccess);
+    addFailedListener(handleFailed);
+    return () => {
+      removeKkiapayListener("success", handleSuccess);
+      removeKkiapayListener("failed", handleFailed);
     };
+  }, [onSuccess, onFailed]);
 
-    const txRes = await fetch(`${FEDAPAY_BASE}/transactions`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        description: params.description,
-        amount: params.amount,
-        currency: { iso: "XOF" },
-        customer: {
-          firstname: params.customerName.split(" ")[0] || params.customerName,
-          lastname: params.customerName.split(" ").slice(1).join(" ") || "-",
-          phone_number: { number: params.phone, country: "TG" },
-        },
-      }),
+  const pay = useCallback((amount: number, phone: string, name: string) => {
+    openKkiapayWidget({
+      amount,
+      api_key: KKIAPAY_PUBLIC_KEY,
+      sandbox: KKIAPAY_SANDBOX,
+      phone,
+      name,
+      theme: "#3D2B1F",
     });
-    const txData = await txRes.json();
-    const txId: number = txData?.v1?.transaction?.id;
-    if (!txId) {
-      return { success: false, message: txData?.message || "Création transaction échouée." };
-    }
+  }, []);
 
-    const payRes = await fetch(`${FEDAPAY_BASE}/transactions/${txId}/pay`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        currency: { iso: "XOF" },
-        mode: params.network,
-        mobile_money: { number: params.phone },
-      }),
-    });
-    const payData = await payRes.json();
-    if (payData?.v1?.transaction?.status === "pending" || payRes.ok) {
-      return { success: true, transactionId: String(txId) };
-    }
-    return { success: false, message: payData?.message || "Paiement échoué." };
-  } catch {
-    return { success: false, message: "Erreur réseau. Vérifiez votre connexion." };
-  }
+  return { pay };
 }
 
 function MenuPage() {
@@ -117,7 +107,6 @@ function MenuPage() {
   const [gpsError, setGpsError] = useState("");
 
   const [payStep, setPayStep] = useState<PayStep>("idle");
-  const [payError, setPayError] = useState("");
   const [transactionId, setTransactionId] = useState("");
 
   const FEDAPAY_API_KEY = import.meta.env.VITE_FEDAPAY_KEY ?? "";
@@ -165,7 +154,7 @@ function MenuPage() {
       if (mapsLink) lines.push(`Position GPS : ${mapsLink}`);
     }
     lines.push(`Paiement : ${payment === "especes" ? "Espèces" : payment === "t-money" ? `T-Money (${CONTACT.tmoneyNumber})` : `Flooz (${CONTACT.floozNumber})`}`);
-    if (transactionId) lines.push(`Transaction FedaPay : ${transactionId}`);
+    if (transactionId) lines.push(`Transaction KKiaPay : ${transactionId}`);
     lines.push("");
     lines.push("*Articles :*");
     cart.items.forEach((i) => {
@@ -177,41 +166,22 @@ function MenuPage() {
     return `https://wa.me/${CONTACT.whatsapp}?text=${encodeURIComponent(lines.join("\n"))}`;
   }, [cart.items, cart.total, name, phone, mode, address, payment, note, mapsLink, transactionId]);
 
-  const handleOnlinePayment = useCallback(async () => {
-    if (!canSubmit) return;
-    if (!phone.trim()) {
-      setPayError("Entrez votre numéro de téléphone mobile money.");
-      return;
-    }
-    setPayStep("loading");
-    setPayError("");
-
-    const network = payment === "flooz" ? "flooz" : "tmoney";
-    const cleanPhone = phone.replace(/\s/g, "").replace("+228", "").replace("00228", "");
-
-    const result = await initiateFedaPayPayment({
-      phone: cleanPhone,
-      amount: cart.total,
-      network,
-      customerName: name,
-      description: `Commande Les Délices de Norbert — ${name}`,
-      apiKey: FEDAPAY_API_KEY,
-    });
-
-    if (result.success) {
-      setTransactionId(result.transactionId ?? "");
-      setPayStep("success");
-    } else {
-      setPayError(result.message ?? "Paiement échoué.");
-      setPayStep("error");
-    }
-  }, [canSubmit, phone, payment, cart.total, name, FEDAPAY_API_KEY]);
-
-  const resetPay = () => {
+  const resetPay = useCallback(() => {
     setPayStep("idle");
-    setPayError("");
     setTransactionId("");
-  };
+  }, []);
+
+  const { pay: kkiaPay } = useKkiaPay(
+    useCallback((txId: string) => { setTransactionId(txId); setPayStep("success"); }, []),
+    useCallback(() => setPayStep("error"), []),
+  );
+
+  const handleOnlinePayment = useCallback(() => {
+    if (!canSubmit) return;
+    const cleanPhone = phone.replace(/\s/g, "").replace("+228", "").replace("00228", "");
+    setPayStep("loading");
+    kkiaPay(cart.total, cleanPhone, name);
+  }, [canSubmit, phone, name, cart.total, kkiaPay]);
 
   const isOnlinePayment = payment === "t-money" || payment === "flooz";
 
@@ -506,7 +476,7 @@ function MenuPage() {
                     <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4">
                       <AlertCircle size={18} className="mt-0.5 shrink-0 text-red-600" />
                       <div>
-                        <p className="text-sm font-bold text-red-700">{payError}</p>
+                        <p className="text-sm font-bold text-red-700">Paiement annulé ou échoué.</p>
                         <button type="button" onClick={resetPay} className="mt-1 text-xs font-bold text-red-600 underline">
                           Réessayer
                         </button>
